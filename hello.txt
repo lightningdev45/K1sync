@@ -1,0 +1,126 @@
+package main
+
+import (
+  "log"
+  "net/http"
+  "github.com/gorilla/mux"
+
+)
+
+
+func main() {
+  log.Println("Starting Server")
+  log.Println("Starting mongo db session")
+
+  r := mux.NewRouter()
+  r.HandleFunc("/sockets", serveWs)
+  r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
+  http.Handle("/", r)
+
+  log.Println("Listening on 8080")
+  http.ListenAndServe("10.0.0.2:8080", nil)
+  go h.run()
+}
+
+
+{"id":72,"recipient_id":null,"producer_id":1,"year":2014,"file_size":332665,"file":"malanga.pdf","form_type":"Form K1","file_type":"application/pdf","partner_id":null,"expected_document_id":null,"download_count":0,"notes":null,"created_at":"2014-11-13T21:16:57.620Z","updated_at":"2014-11-13T21:16:57.620Z","final":false}
+
+package main
+
+import (
+  //"encoding/json"
+  //"fmt"
+  "github.com/gorilla/mux"
+  "github.com/gorilla/websocket"
+  "log"
+  "net/http"
+  "sync"
+  "net"
+  //"net/url"
+
+  //"github.com/kempchee/GoEmber/handlers"
+)
+
+var ActiveClients = make(map[ClientConn]int)
+var ActiveClientsRWMutex sync.RWMutex
+
+type ClientConn struct {
+  websocket *websocket.Conn
+  clientIP  net.Addr
+}
+
+func addClient(cc ClientConn) {
+  ActiveClientsRWMutex.Lock()
+  ActiveClients[cc] = 0
+  ActiveClientsRWMutex.Unlock()
+}
+
+func deleteClient(cc ClientConn) {
+  ActiveClientsRWMutex.Lock()
+  delete(ActiveClients, cc)
+  ActiveClientsRWMutex.Unlock()
+}
+
+func broadcastMessage(messageType int, message []byte) {
+  ActiveClientsRWMutex.RLock()
+  defer ActiveClientsRWMutex.RUnlock()
+
+  for client, _ := range ActiveClients {
+    if err := client.websocket.WriteMessage(messageType, message); err != nil {
+      return
+    }
+  }
+}
+
+
+
+
+func main() {
+  log.Println("Starting Server")
+  log.Println("Starting mongo db session")
+
+
+  r := mux.NewRouter()
+  r.HandleFunc("/sockets", SocketsHandler)
+  r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
+  http.Handle("/", r)
+
+  log.Println("Listening on 8080")
+  http.ListenAndServe("10.0.0.2:8080", nil)
+}
+
+
+
+var upgrader = websocket.Upgrader{
+  ReadBufferSize:  1024,
+  WriteBufferSize: 1024,
+  CheckOrigin: func(r *http.Request) bool { return true },
+
+}
+
+func SocketsHandler(w http.ResponseWriter, r *http.Request) {
+  log.Println(ActiveClients)
+    ws, err := websocket.Upgrade(w, r, nil, 1024, 1024)
+    if _, ok := err.(websocket.HandshakeError); ok {
+      http.Error(w, "Not a websocket handshake", 400)
+      return
+    } else if err != nil {
+      log.Println(err)
+      return
+    }
+    client := ws.RemoteAddr()
+    sockCli := ClientConn{ws, client}
+    addClient(sockCli)
+
+    for {
+      log.Println(len(ActiveClients), ActiveClients)
+      messageType, p, err := ws.ReadMessage()
+      if err != nil {
+        deleteClient(sockCli)
+        log.Println("bye")
+        log.Println(err)
+        return
+      }
+      broadcastMessage(messageType, p)
+    }
+}
